@@ -212,6 +212,54 @@
   }
   .btn-close:hover { background: var(--neutral-hover); }
 
+  .debug-panel {
+    width: 100%;
+    max-width: 420px;
+    margin: 0 0 12px;
+    background: #1B2430;
+    color: #D8DCE2;
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-family: "SF Mono", "Roboto Mono", Consolas, monospace;
+    font-size: 12px;
+    display: none;
+  }
+
+  .debug-panel.show { display: block; }
+
+  .debug-panel-title {
+    font-weight: 700;
+    color: #fff;
+    margin: 0 0 8px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+
+  .debug-section {
+    margin-bottom: 8px;
+  }
+
+  .debug-section:last-child { margin-bottom: 0; }
+
+  .debug-label {
+    color: #8AA0BF;
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+  }
+
+  .debug-row {
+    display: flex;
+    gap: 6px;
+    word-break: break-all;
+    line-height: 1.5;
+  }
+
+  .debug-key { color: #7FB3E8; flex-shrink: 0; }
+  .debug-val { color: #D8DCE2; }
+
+  .debug-empty { color: #616B7A; font-style: italic; }
+
   .toast {
     position: fixed;
     left: 50%;
@@ -286,7 +334,20 @@
 </head>
 <body>
 
-<div class="screen">
+<div class="screen" style="flex-direction: column; align-items: center;">
+
+  <div class="debug-panel" id="debugPanel">
+    <p class="debug-panel-title">Incoming request debug</p>
+    <div class="debug-section">
+      <div class="debug-label">Query params</div>
+      <div id="debugParams"><span class="debug-empty">none</span></div>
+    </div>
+    <div class="debug-section">
+      <div class="debug-label">Headers (via native bridge only)</div>
+      <div id="debugHeaders"><span class="debug-empty">none received</span></div>
+    </div>
+  </div>
+
   <form id="customForm" novalidate>
     <p class="form-title">Submit details</p>
     <p class="form-subtitle">Fill in both fields and attach a file.</p>
@@ -304,7 +365,7 @@
     </div>
 
     <div class="field">
-      <label for="fileInput" class="required">Attachment</label>
+      <label for="fileInput">Attachment (optional)</label>
       <div class="file-drop" id="fileDrop">
         <input type="file" id="fileInput" name="fileInput">
         <div class="file-drop-text"><strong>Choose a file</strong> or drop it here</div>
@@ -313,7 +374,7 @@
         <span class="file-name" id="fileName"></span>
         <button type="button" class="file-remove" id="fileRemove">Remove</button>
       </div>
-      <div class="error-text" id="fileError">Please attach a file.</div>
+
     </div>
 
     <div class="actions">
@@ -338,6 +399,43 @@
 
 <script>
 (function () {
+  // ---- Debug panel: query params + optional native-injected headers ----
+  const debugPanel = document.getElementById('debugPanel');
+  const debugParams = document.getElementById('debugParams');
+  const debugHeaders = document.getElementById('debugHeaders');
+
+  function renderKeyVals(container, entries) {
+    if (!entries.length) {
+      container.innerHTML = '<span class="debug-empty">none</span>';
+      return;
+    }
+    container.innerHTML = entries.map(([k, v]) =>
+      `<div class="debug-row"><span class="debug-key">${escapeHtml(k)}:</span><span class="debug-val">${escapeHtml(v)}</span></div>`
+    ).join('');
+  }
+
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const paramEntries = [...params.entries()];
+  if (paramEntries.length > 0) {
+    debugPanel.classList.add('show');
+  }
+  renderKeyVals(debugParams, paramEntries);
+
+  // Native app can call this after page load to display headers it set,
+  // e.g. (Android): webView.evaluateJavascript("window.showHeaders(" + json + ")", null);
+  // e.g. (iOS): webView.evaluateJavaScript("window.showHeaders(\(jsonString))")
+  window.showHeaders = function (headersObj) {
+    const entries = Object.entries(headersObj || {});
+    debugPanel.classList.add('show');
+    renderKeyVals(debugHeaders, entries);
+  };
+
   const form = document.getElementById('customForm');
   const fieldOne = document.getElementById('fieldOne');
   const fieldTwo = document.getElementById('fieldTwo');
@@ -348,7 +446,6 @@
   const fileSelected = document.getElementById('fileSelected');
   const fileName = document.getElementById('fileName');
   const fileRemove = document.getElementById('fileRemove');
-  const fileError = document.getElementById('fileError');
   const closeBtn = document.getElementById('closeBtn');
   const cancelBtn = document.getElementById('cancelBtn');
   const confirmOverlay = document.getElementById('confirmOverlay');
@@ -375,7 +472,6 @@
     fieldTwo.classList.remove('invalid');
     fieldOneError.classList.remove('show');
     fieldTwoError.classList.remove('show');
-    fileError.classList.remove('show');
   }
 
   // File selection (click)
@@ -385,7 +481,6 @@
     if (fileInput.files.length > 0) {
       fileName.textContent = fileInput.files[0].name;
       fileSelected.classList.add('show');
-      fileError.classList.remove('show');
     } else {
       fileSelected.classList.remove('show');
     }
@@ -415,7 +510,6 @@
       fileInput.files = e.dataTransfer.files;
       fileName.textContent = fileInput.files[0].name;
       fileSelected.classList.add('show');
-      fileError.classList.remove('show');
     }
   });
 
@@ -430,16 +524,66 @@
     return valid;
   }
 
+  // ------------------------------------------------------------------
+  // LSQ external form bridge
+  //
+  // Contract source (do not guess these strings — they are read from the app):
+  //   ExternalFormEvent.kt  @ androidcoreapp c5d76998cdb8
+  //   ExternalFormClient.kt @ androidcoreapp c5d76998cdb8
+  //
+  //   CLIENT_NAME = "LSQExternalFormClient"
+  //   method      = onExternalFormEvent(String json)
+  //   payload     = { "type": "EXTERNAL_FORM", "action": "SUCCESS"|"CLOSE"|"CANCEL" }
+  //
+  // Native reaction:
+  //   SUCCESS -> onExternalFormCloseRequested(true)   -> Activity RESULT_OK,
+  //              originating screen refreshes
+  //   CLOSE   -> onExternalFormCloseRequested(false)  -> Activity RESULT_CANCELED
+  //   CANCEL  -> onExternalFormCloseRequested(false)  -> Activity RESULT_CANCELED
+  //   anything else, or a malformed payload -> silently ignored
+  //
+  // Only `type` and `action` cross the bridge. Field values and file metadata
+  // are NOT forwarded — the app deliberately never parses or persists external
+  // form data (AC12). This page must POST its own data to its own backend
+  // BEFORE signalling SUCCESS.
+  // ------------------------------------------------------------------
+  const LSQ_CLIENT_NAME = 'LSQExternalFormClient';
+  const LSQ_EVENT_TYPE  = 'EXTERNAL_FORM';
+  const LSQ_ACTION = { SUCCESS: 'SUCCESS', CLOSE: 'CLOSE', CANCEL: 'CANCEL' };
+
+  function notifyLsq(action) {
+    const event = { type: LSQ_EVENT_TYPE, action: action };
+
+    // Path 1 — direct JS interface.
+    // ExternalFormWebViewFragment.setUpWebView() registers this unconditionally,
+    // for first-party and third-party hosts alike, so it is the most reliable
+    // path. It also bypasses the bridge script's same-origin check entirely.
+    const client = window[LSQ_CLIENT_NAME];
+    if (client && typeof client.onExternalFormEvent === 'function') {
+      client.onExternalFormEvent(JSON.stringify(event));
+      console.log('[LSQ] sent via JS interface:', action);
+      return 'jsinterface';
+    }
+
+    // Path 2 — postMessage relay installed by ExternalFormEvent.BRIDGE_SCRIPT.
+    // Two things the relay is strict about:
+    //   a) it drops the message unless event.origin === window.location.origin,
+    //      so the target origin must be this page's own origin — not '*';
+    //   b) it reads event.data as an OBJECT and checks data.type, so posting a
+    //      JSON *string* here would be silently discarded.
+    window.postMessage(event, window.location.origin);
+    console.log('[LSQ] sent via postMessage relay:', action);
+    return 'postmessage';
+  }
+
   // Submit
   form.addEventListener('submit', (e) => {
     e.preventDefault();
 
     const oneValid = validateField(fieldOne, fieldOneError);
     const twoValid = validateField(fieldTwo, fieldTwoError);
-    const fileValid = fileInput.files.length > 0;
-    fileError.classList.toggle('show', !fileValid);
 
-    if (!oneValid || !twoValid || !fileValid) {
+    if (!oneValid || !twoValid) {
       showToast('Fix the highlighted fields.');
       return;
     }
@@ -447,30 +591,43 @@
     const payload = {
       fieldOne: fieldOne.value.trim(),
       fieldTwo: fieldTwo.value.trim(),
-      file: {
-        name: fileInput.files[0].name,
-        size: fileInput.files[0].size,
-        type: fileInput.files[0].type
-      }
+      file: fileInput.files.length > 0
+        ? {
+            name: fileInput.files[0].name,
+            size: fileInput.files[0].size,
+            type: fileInput.files[0].type
+          }
+        : null
     };
 
-    // No backend wired up — logging the payload only.
     console.log('Form submitted:', payload);
 
+    // IMPORTANT: this page owns submission. Persist the payload to your own
+    // backend here and only signal SUCCESS once that call has resolved.
+    // Signalling SUCCESS first will close the webview mid-flight and the
+    // originating LSQ screen will refresh against data that was never saved.
+    //
+    //   await fetch('/your/endpoint', { method: 'POST', body: ... });
+    //   notifyLsq(LSQ_ACTION.SUCCESS);
+
+    // The app dismisses the webview as soon as SUCCESS arrives, so this toast
+    // is not visible in-app. It is kept for browser testing only; the short
+    // delay lets you see it when the page is opened outside the app.
     showToast('Submitted.');
+    setTimeout(() => notifyLsq(LSQ_ACTION.SUCCESS), 150);
   });
 
-  // Close — dismiss silently, no confirmation
+  // Close — dismiss silently, no confirmation. Native returns RESULT_CANCELED.
   closeBtn.addEventListener('click', () => {
     console.log('Form closed');
-    // Hook for native bridge, e.g.:
-    // if (window.NativeBridge) window.NativeBridge.closeForm();
+    notifyLsq(LSQ_ACTION.CLOSE);
   });
 
-  // Cancel — confirm before clearing
+  // Cancel — confirm before clearing. Native returns RESULT_CANCELED.
   cancelBtn.addEventListener('click', () => {
     if (!hasData()) {
       console.log('Form cancelled (no data to discard)');
+      notifyLsq(LSQ_ACTION.CANCEL);
       return;
     }
     confirmOverlay.classList.add('show');
@@ -480,6 +637,7 @@
     clearForm();
     confirmOverlay.classList.remove('show');
     console.log('Form cancelled, data discarded');
+    notifyLsq(LSQ_ACTION.CANCEL);
   });
 
   confirmNo.addEventListener('click', () => {
