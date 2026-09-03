@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Custom Form</title>
+<style>
+  :root {
+    --bg: #F7F8FA;
+    --surface: #FFFFFF;
+    --border: #D8DCE2;
+    --border-focus: #3A6EA5;
+    --text: #1B2430;
+    --text-muted: #616B7A;
+    --primary: #3A6EA5;
+    --primary-hover: #2F5C8A;
+    --danger: #B3431E;
+    --danger-hover: #963616;
+    --neutral: #EEF0F3;
+    --neutral-hover: #E2E5EA;
+    --radius: 6px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .screen {
+    min-height: 100vh;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 24px 16px;
+  }
+
+  form {
+    width: 100%;
+    max-width: 420px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+  }
+
+  .form-title {
+    font-size: 17px;
+    font-weight: 600;
+    margin: 0 0 4px;
+  }
+
+  .form-subtitle {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin: 0 0 20px;
+  }
+
+  .field {
+    margin-bottom: 16px;
+  }
+
+  label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: var(--text);
+  }
+
+  .required::after {
+    content: " *";
+    color: var(--danger);
+  }
+
+  input[type="text"] {
+    width: 100%;
+    padding: 11px 12px;
+    font-size: 15px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    outline: none;
+    transition: border-color 0.15s ease;
+  }
+
+  input[type="text"]:focus {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 3px rgba(58, 110, 165, 0.15);
+  }
+
+  input[type="text"].invalid {
+    border-color: var(--danger);
+  }
+
+  .error-text {
+    font-size: 12px;
+    color: var(--danger);
+    margin-top: 5px;
+    display: none;
+  }
+
+  .error-text.show { display: block; }
+
+  .file-drop {
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 16px 12px;
+    text-align: center;
+    cursor: pointer;
+    background: var(--bg);
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+
+  .file-drop:hover { border-color: var(--border-focus); }
+
+  .file-drop.dragover {
+    border-color: var(--border-focus);
+    background: rgba(58, 110, 165, 0.06);
+  }
+
+  .file-drop input[type="file"] { display: none; }
+
+  .file-drop-text {
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+
+  .file-drop-text strong {
+    color: var(--primary);
+    font-weight: 600;
+  }
+
+  .file-selected {
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 8px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 13px;
+  }
+
+  .file-selected.show { display: flex; }
+
+  .file-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+
+  .file-remove {
+    background: none;
+    border: none;
+    color: var(--danger);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 2px 4px;
+    flex-shrink: 0;
+  }
+
+  .actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 22px;
+  }
+
+  button {
+    flex: 1;
+    padding: 12px 14px;
+    font-size: 14px;
+    font-weight: 600;
+    border-radius: var(--radius);
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+  }
+
+  button:active { opacity: 0.85; }
+
+  .btn-submit {
+    background: var(--primary);
+    color: #fff;
+  }
+  .btn-submit:hover { background: var(--primary-hover); }
+  .btn-submit:disabled {
+    background: #A8B4C2;
+    cursor: not-allowed;
+  }
+
+  .btn-cancel {
+    background: var(--surface);
+    color: var(--danger);
+    border-color: var(--border);
+  }
+  .btn-cancel:hover { background: var(--neutral); }
+
+  .btn-close {
+    background: var(--neutral);
+    color: var(--text);
+  }
+  .btn-close:hover { background: var(--neutral-hover); }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%) translateY(12px);
+    background: var(--text);
+    color: #fff;
+    padding: 10px 16px;
+    border-radius: var(--radius);
+    font-size: 13px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    max-width: calc(100% - 32px);
+    text-align: center;
+  }
+
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  .confirm-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(27, 36, 48, 0.4);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    z-index: 10;
+  }
+
+  .confirm-overlay.show { display: flex; }
+
+  .confirm-box {
+    background: var(--surface);
+    border-radius: 10px;
+    padding: 18px;
+    width: 100%;
+    max-width: 320px;
+  }
+
+  .confirm-box p {
+    margin: 0 0 16px;
+    font-size: 14px;
+    color: var(--text);
+  }
+
+  .confirm-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .confirm-actions button {
+    padding: 9px 12px;
+    font-size: 13px;
+  }
+
+  .btn-confirm-yes {
+    background: var(--danger);
+    color: #fff;
+  }
+  .btn-confirm-yes:hover { background: var(--danger-hover); }
+
+  .btn-confirm-no {
+    background: var(--neutral);
+    color: var(--text);
+  }
+  .btn-confirm-no:hover { background: var(--neutral-hover); }
+</style>
+</head>
+<body>
+
+<div class="screen">
+  <form id="customForm" novalidate>
+    <p class="form-title">Submit details</p>
+    <p class="form-subtitle">Fill in both fields and attach a file.</p>
+
+    <div class="field">
+      <label for="fieldOne" class="required">Field one</label>
+      <input type="text" id="fieldOne" name="fieldOne" autocomplete="off">
+      <div class="error-text" id="fieldOneError">This field is required.</div>
+    </div>
+
+    <div class="field">
+      <label for="fieldTwo" class="required">Field two</label>
+      <input type="text" id="fieldTwo" name="fieldTwo" autocomplete="off">
+      <div class="error-text" id="fieldTwoError">This field is required.</div>
+    </div>
+
+    <div class="field">
+      <label for="fileInput" class="required">Attachment</label>
+      <div class="file-drop" id="fileDrop">
+        <input type="file" id="fileInput" name="fileInput">
+        <div class="file-drop-text"><strong>Choose a file</strong> or drop it here</div>
+      </div>
+      <div class="file-selected" id="fileSelected">
+        <span class="file-name" id="fileName"></span>
+        <button type="button" class="file-remove" id="fileRemove">Remove</button>
+      </div>
+      <div class="error-text" id="fileError">Please attach a file.</div>
+    </div>
+
+    <div class="actions">
+      <button type="button" class="btn-close" id="closeBtn">Close</button>
+      <button type="button" class="btn-cancel" id="cancelBtn">Cancel</button>
+      <button type="submit" class="btn-submit" id="submitBtn">Submit</button>
+    </div>
+  </form>
+</div>
+
+<div class="confirm-overlay" id="confirmOverlay">
+  <div class="confirm-box">
+    <p>Discard the entered data?</p>
+    <div class="confirm-actions">
+      <button type="button" class="btn-confirm-no" id="confirmNo">Keep editing</button>
+      <button type="button" class="btn-confirm-yes" id="confirmYes">Discard</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  const form = document.getElementById('customForm');
+  const fieldOne = document.getElementById('fieldOne');
+  const fieldTwo = document.getElementById('fieldTwo');
+  const fieldOneError = document.getElementById('fieldOneError');
+  const fieldTwoError = document.getElementById('fieldTwoError');
+  const fileDrop = document.getElementById('fileDrop');
+  const fileInput = document.getElementById('fileInput');
+  const fileSelected = document.getElementById('fileSelected');
+  const fileName = document.getElementById('fileName');
+  const fileRemove = document.getElementById('fileRemove');
+  const fileError = document.getElementById('fileError');
+  const closeBtn = document.getElementById('closeBtn');
+  const cancelBtn = document.getElementById('cancelBtn');
+  const confirmOverlay = document.getElementById('confirmOverlay');
+  const confirmYes = document.getElementById('confirmYes');
+  const confirmNo = document.getElementById('confirmNo');
+  const toast = document.getElementById('toast');
+
+  function showToast(msg) {
+    toast.textContent = msg;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 1800);
+  }
+
+  function hasData() {
+    return fieldOne.value.trim() !== '' ||
+           fieldTwo.value.trim() !== '' ||
+           fileInput.files.length > 0;
+  }
+
+  function clearForm() {
+    form.reset();
+    fileSelected.classList.remove('show');
+    fieldOne.classList.remove('invalid');
+    fieldTwo.classList.remove('invalid');
+    fieldOneError.classList.remove('show');
+    fieldTwoError.classList.remove('show');
+    fileError.classList.remove('show');
+  }
+
+  // File selection (click)
+  fileDrop.addEventListener('click', () => fileInput.click());
+
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files.length > 0) {
+      fileName.textContent = fileInput.files[0].name;
+      fileSelected.classList.add('show');
+      fileError.classList.remove('show');
+    } else {
+      fileSelected.classList.remove('show');
+    }
+  });
+
+  fileRemove.addEventListener('click', (e) => {
+    e.stopPropagation();
+    fileInput.value = '';
+    fileSelected.classList.remove('show');
+  });
+
+  // Drag and drop (desktop WebView / browser preview)
+  ['dragenter', 'dragover'].forEach(evt =>
+    fileDrop.addEventListener(evt, (e) => {
+      e.preventDefault();
+      fileDrop.classList.add('dragover');
+    })
+  );
+  ['dragleave', 'drop'].forEach(evt =>
+    fileDrop.addEventListener(evt, (e) => {
+      e.preventDefault();
+      fileDrop.classList.remove('dragover');
+    })
+  );
+  fileDrop.addEventListener('drop', (e) => {
+    if (e.dataTransfer.files.length > 0) {
+      fileInput.files = e.dataTransfer.files;
+      fileName.textContent = fileInput.files[0].name;
+      fileSelected.classList.add('show');
+      fileError.classList.remove('show');
+    }
+  });
+
+  // Inline validation on blur
+  fieldOne.addEventListener('blur', () => validateField(fieldOne, fieldOneError));
+  fieldTwo.addEventListener('blur', () => validateField(fieldTwo, fieldTwoError));
+
+  function validateField(input, errorEl) {
+    const valid = input.value.trim() !== '';
+    input.classList.toggle('invalid', !valid);
+    errorEl.classList.toggle('show', !valid);
+    return valid;
+  }
+
+  // Submit
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+
+    const oneValid = validateField(fieldOne, fieldOneError);
+    const twoValid = validateField(fieldTwo, fieldTwoError);
+    const fileValid = fileInput.files.length > 0;
+    fileError.classList.toggle('show', !fileValid);
+
+    if (!oneValid || !twoValid || !fileValid) {
+      showToast('Fix the highlighted fields.');
+      return;
+    }
+
+    const payload = {
+      fieldOne: fieldOne.value.trim(),
+      fieldTwo: fieldTwo.value.trim(),
+      file: {
+        name: fileInput.files[0].name,
+        size: fileInput.files[0].size,
+        type: fileInput.files[0].type
+      }
+    };
+
+    // No backend wired up — logging the payload only.
+    console.log('Form submitted:', payload);
+
+    showToast('Submitted.');
+  });
+
+  // Close — dismiss silently, no confirmation
+  closeBtn.addEventListener('click', () => {
+    console.log('Form closed');
+    // Hook for native bridge, e.g.:
+    // if (window.NativeBridge) window.NativeBridge.closeForm();
+  });
+
+  // Cancel — confirm before clearing
+  cancelBtn.addEventListener('click', () => {
+    if (!hasData()) {
+      console.log('Form cancelled (no data to discard)');
+      return;
+    }
+    confirmOverlay.classList.add('show');
+  });
+
+  confirmYes.addEventListener('click', () => {
+    clearForm();
+    confirmOverlay.classList.remove('show');
+    console.log('Form cancelled, data discarded');
+  });
+
+  confirmNo.addEventListener('click', () => {
+    confirmOverlay.classList.remove('show');
+  });
+})();
+</script>
+
+</body>
+</html>
