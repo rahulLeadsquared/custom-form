@@ -260,6 +260,68 @@
 
   .debug-empty { color: #616B7A; font-style: italic; }
 
+  .debug-banner {
+    display: none;
+    padding: 8px 10px;
+    border-radius: 5px;
+    margin-bottom: 10px;
+    font-size: 11px;
+    line-height: 1.5;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .debug-banner.show { display: block; }
+  .debug-banner.bad  { background: #4A1A0D; color: #FFB59B; border: 1px solid #B3431E; }
+  .debug-banner.good { background: #10331F; color: #8FD9AE; border: 1px solid #2E7D4F; }
+
+  .ctx-table { width: 100%; border-collapse: collapse; }
+  .ctx-table td {
+    padding: 4px 0;
+    vertical-align: top;
+    border-bottom: 1px solid #2A3542;
+    word-break: break-all;
+  }
+  .ctx-table tr:last-child td { border-bottom: none; }
+  .ctx-key { color: #7FB3E8; width: 34%; padding-right: 8px !important; }
+  .ctx-val { color: #D8DCE2; }
+
+  .badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+  }
+  .badge-ok      { background: #1E5B38; color: #A7E8C4; }
+  .badge-absent  { background: #3A424D; color: #A8B4C2; }
+  .badge-empty   { background: #6B5312; color: #F2D488; }
+  .badge-token   { background: #7A2A11; color: #FFC0AA; }
+
+  .debug-url {
+    color: #D8DCE2;
+    word-break: break-all;
+    line-height: 1.5;
+    background: #121A24;
+    padding: 7px 8px;
+    border-radius: 4px;
+  }
+
+  .debug-copy {
+    margin-top: 7px;
+    padding: 5px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    background: #2A3542;
+    color: #D8DCE2;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    flex: none;
+    width: auto;
+  }
+  .debug-copy:hover { background: #354254; }
+
   .toast {
     position: fixed;
     left: 50%;
@@ -336,12 +398,32 @@
 
 <div class="screen" style="flex-direction: column; align-items: center;">
 
-  <div class="debug-panel" id="debugPanel">
-    <p class="debug-panel-title">Incoming request debug</p>
+  <div class="debug-panel show" id="debugPanel">
+    <p class="debug-panel-title">LSQ context debug</p>
+
+    <div class="debug-banner" id="debugBanner"></div>
+
     <div class="debug-section">
-      <div class="debug-label">Query params</div>
+      <div class="debug-label">Entity context (AC9)</div>
+      <table class="ctx-table" id="ctxTable"></table>
+    </div>
+
+    <div class="debug-section">
+      <div class="debug-label">Other query params</div>
       <div id="debugParams"><span class="debug-empty">none</span></div>
     </div>
+
+    <div class="debug-section">
+      <div class="debug-label">Resolved URL</div>
+      <div class="debug-url" id="debugUrl"></div>
+      <button type="button" class="debug-copy" id="debugCopy">Copy URL</button>
+    </div>
+
+    <div class="debug-section">
+      <div class="debug-label">Native bridge</div>
+      <div id="debugBridge"></div>
+    </div>
+
     <div class="debug-section">
       <div class="debug-label">Headers (via native bridge only)</div>
       <div id="debugHeaders"><span class="debug-empty">none received</span></div>
@@ -420,12 +502,123 @@
     }[c]));
   }
 
+  // ------------------------------------------------------------------
+  // Entity-context diagnostics (AC9)
+  //
+  // How the IDs actually arrive, traced through androidcoreapp @ c5d76998cdb8:
+  //
+  //   ExternalFormLauncher.entityIdKeyValues()  builds KeyValues for
+  //     leadId / opportunityId / activityId / taskId  (empty ones are dropped)
+  //        -> Intent extra INTENT_MAIL_MERGE_ID_KEY_VALUES
+  //        -> WebViewActivity.mailMergeUrl() runs LSMailMergeEngine over the
+  //           ADMIN-CONFIGURED URL with MailMergeType.LOCAL_AND_SERVER
+  //        -> LSLocalMailMergeDecorator: local pass first, then server pass
+  //             local  = LSLocalMailMerge, resolves @{User:*} on-device
+  //             server = LSServerMailMerge, POSTs {data:<url>, leadId, ...}
+  //        -> the merged URL is what this page finally loads
+  //
+  // Token syntax is Util.MAIL_MERGE_REGEX:  @{Entity:Schema, }
+  //   -> the comma before the closing brace is MANDATORY
+  //   -> MailMergeEntity has only: User, Lead, Opportunity, Account, Default
+  //      There is NO Activity or Task entity, so @{Activity:...} / @{Task:...}
+  //      cannot resolve locally and depend entirely on the server endpoint.
+  //   -> @{User:UserId, } is resolved locally by UserMailMergeValueProvider.
+  //
+  // A token left verbatim in the URL means the merge did NOT resolve it.
+  // That is the single most useful signal on this panel.
+  // ------------------------------------------------------------------
+  const EXPECTED_KEYS = [
+    ['leadId',        'Lead ID'],
+    ['opportunityId', 'Opportunity ID'],
+    ['activityId',    'Activity ID'],
+    ['taskId',        'Task ID'],
+    ['userId',        'User ID']
+  ];
+
+  // Matches an unresolved LSQ mail-merge token, e.g. "@{Lead:ProspectId, }"
+  const UNRESOLVED_TOKEN = /@\{[\w-]+:[^}]*\}/;
+
   const params = new URLSearchParams(window.location.search);
   const paramEntries = [...params.entries()];
-  if (paramEntries.length > 0) {
-    debugPanel.classList.add('show');
+  const expectedNames = EXPECTED_KEYS.map(([k]) => k);
+
+  function classify(rawValue) {
+    if (rawValue === null)                     return { badge: 'absent', label: 'NOT SENT',      cls: 'badge-absent' };
+    if (rawValue.trim() === '')                return { badge: 'empty',  label: 'SENT EMPTY',    cls: 'badge-empty'  };
+    if (UNRESOLVED_TOKEN.test(rawValue))       return { badge: 'token',  label: 'NOT MERGED',    cls: 'badge-token'  };
+    return { badge: 'ok', label: 'OK', cls: 'badge-ok' };
   }
-  renderKeyVals(debugParams, paramEntries);
+
+  const results = EXPECTED_KEYS.map(([key, label]) => {
+    const raw = params.get(key);
+    return { key, label, raw, state: classify(raw) };
+  });
+
+  document.getElementById('ctxTable').innerHTML = results.map(r => `
+    <tr>
+      <td class="ctx-key">${escapeHtml(r.label)}<br><span style="opacity:.6">${escapeHtml(r.key)}</span></td>
+      <td class="ctx-val">
+        <span class="badge ${r.state.cls}">${r.state.label}</span>
+        ${r.raw !== null && r.raw.trim() !== '' ? `<div style="margin-top:4px">${escapeHtml(r.raw)}</div>` : ''}
+      </td>
+    </tr>`).join('');
+
+  // Extra params beyond the five expected ones
+  renderKeyVals(debugParams, paramEntries.filter(([k]) => !expectedNames.includes(k)));
+
+  // Full resolved URL — the definitive record of what native handed the page
+  const debugUrlEl = document.getElementById('debugUrl');
+  let decodedUrl = window.location.href;
+  try { decodedUrl = decodeURIComponent(window.location.href); } catch (e) { /* keep raw */ }
+  debugUrlEl.textContent = decodedUrl;
+
+  document.getElementById('debugCopy').addEventListener('click', function () {
+    const done = () => { this.textContent = 'Copied'; setTimeout(() => { this.textContent = 'Copy URL'; }, 1200); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(window.location.href).then(done).catch(() => {});
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = window.location.href;
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); done(); } catch (e) {}
+      document.body.removeChild(ta);
+    }
+  });
+
+  // Verdict banner
+  const banner = document.getElementById('debugBanner');
+  const notMerged = results.filter(r => r.state.badge === 'token');
+  const urlHasToken = UNRESOLVED_TOKEN.test(decodedUrl);
+  const resolved = results.filter(r => r.state.badge === 'ok');
+
+  if (notMerged.length || urlHasToken) {
+    banner.className = 'debug-banner show bad';
+    banner.innerHTML =
+      '<strong>Mail merge did not fully resolve.</strong><br>' +
+      (notMerged.length
+        ? 'Unresolved: ' + notMerged.map(r => escapeHtml(r.key)).join(', ') + '. '
+        : '') +
+      'A verbatim <code>@{Entity:Schema, }</code> token in the URL means neither the local nor the server pass substituted it.';
+  } else if (resolved.length) {
+    banner.className = 'debug-banner show good';
+    banner.innerHTML = '<strong>' + resolved.length + ' of ' + EXPECTED_KEYS.length +
+      ' context values resolved.</strong> Values still need cross-checking against the originating record.';
+  } else {
+    banner.className = 'debug-banner show bad';
+    banner.innerHTML = '<strong>No entity context received.</strong> ' +
+      'Confirm the Process Designer URL actually contains mail-merge tokens — a URL with no <code>@{...}</code> ' +
+      'skips merging entirely (<code>Util.checkIfMailMergeRequired</code> returns false).';
+  }
+
+  // Is the native JS bridge present? Tells you first-party vs third-party
+  // treatment and whether the callbacks will use the direct path.
+  const bridgeEl = document.getElementById('debugBridge');
+  const hasClient = !!(window.LSQExternalFormClient && typeof window.LSQExternalFormClient.onExternalFormEvent === 'function');
+  const hasAuth   = !!window.AuthenticationClient;
+  bridgeEl.innerHTML =
+    `<div class="debug-row"><span class="debug-key">LSQExternalFormClient:</span><span class="debug-val">${hasClient ? 'present' : 'ABSENT — not running in the LSQ WebView'}</span></div>` +
+    `<div class="debug-row"><span class="debug-key">AuthenticationClient:</span><span class="debug-val">${hasAuth ? 'present — host treated as FIRST PARTY' : 'absent — host treated as third party'}</span></div>` +
+    `<div class="debug-row"><span class="debug-key">origin:</span><span class="debug-val">${escapeHtml(window.location.origin)}</span></div>`;
 
   // Native app can call this after page load to display headers it set,
   // e.g. (Android): webView.evaluateJavascript("window.showHeaders(" + json + ")", null);
