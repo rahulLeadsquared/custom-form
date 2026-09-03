@@ -426,8 +426,8 @@
 
     <div class="debug-section">
       <div class="debug-label">Geolocation (navigator.geolocation)</div>
-      <div id="debugGeo"><span class="debug-empty">not requested</span></div>
-      <button type="button" class="debug-copy" id="geoBtn">Fetch location</button>
+      <div id="debugGeo"><span class="debug-empty">requesting on load…</span></div>
+      <button type="button" class="debug-copy" id="geoBtn">Retry location</button>
     </div>
 
     <div class="debug-section">
@@ -601,6 +601,35 @@
     }
   });
 
+  // ------------------------------------------------------------------
+  // Greppable logcat output.
+  //
+  // LSWebChromeClient does not override onConsoleMessage, so default WebView
+  // behaviour applies and console output reaches logcat under the "chromium"
+  // tag. That makes this the only way to read the resolved URL in plaintext
+  // from logs: the native log line in LSMailMergeEngine is
+  //   LSLogger.d("Maile merged url: ${AESCrypt().encryptString(...)}")
+  // i.e. AES-encrypted, and no other native log in the external-form path
+  // prints the URL at all.
+  //
+  //   adb logcat -s chromium:I | grep LSQ-CTX
+  // ------------------------------------------------------------------
+  console.log('LSQ-CTX-URL ' + decodedUrl);
+  console.log('LSQ-CTX-JSON ' + JSON.stringify({
+    context: results.reduce((acc, r) => {
+      acc[r.key] = { state: r.state.badge, value: r.raw };
+      return acc;
+    }, {}),
+    otherParams: paramEntries.filter(([k]) => !expectedNames.includes(k))
+                             .reduce((acc, [k, v]) => { acc[k] = v; return acc; }, {}),
+    origin: window.location.origin,
+    hasExternalFormClient: !!(window.LSQExternalFormClient &&
+      typeof window.LSQExternalFormClient.onExternalFormEvent === 'function'),
+    hasAuthenticationClient: !!window.AuthenticationClient,
+    urlContainsUnresolvedToken: UNRESOLVED_TOKEN.test(decodedUrl),
+    userAgent: navigator.userAgent
+  }));
+
   // Verdict banner
   const banner = document.getElementById('debugBanner');
   const notMerged = results.filter(r => r.state.badge === 'token');
@@ -664,14 +693,16 @@
       (detail ? `<div style="margin-top:5px">${detail}</div>` : '');
   }
 
-  document.getElementById('geoBtn').addEventListener('click', () => {
+  function requestGeo(trigger) {
     if (!('geolocation' in navigator)) {
       geoLine('UNSUPPORTED', 'badge-token', 'navigator.geolocation is not exposed in this WebView.');
+      console.log('LSQ-CTX-GEO {"state":"unsupported"}');
       return;
     }
 
     geoLine('REQUESTING…', 'badge-empty',
-      'If no result appears within ' + (GEO_WATCHDOG_MS / 1000) + 's, no callback fired at all.');
+      'Triggered ' + trigger + '. If no result appears within ' +
+      (GEO_WATCHDOG_MS / 1000) + 's, no callback fired at all.');
 
     let settled = false;
     const started = Date.now();
@@ -685,6 +716,8 @@
         '<code>ExternalFormWebViewFragment</code> does not implement ' +
         '<code>onRequestPermissionsResult</code>, so the permission grant never reaches the WebView. ' +
         'Grant location to the app in Android settings and retry: it should then resolve immediately.');
+      console.log('LSQ-CTX-GEO {"state":"no_callback","waitedMs":' + (Date.now() - started) +
+                  ',"trigger":"' + trigger + '"}');
     }, GEO_WATCHDOG_MS);
 
     navigator.geolocation.getCurrentPosition(
@@ -697,17 +730,35 @@
           `<div class="debug-row"><span class="debug-key">lng:</span><span class="debug-val">${c.longitude}</span></div>` +
           `<div class="debug-row"><span class="debug-key">accuracy:</span><span class="debug-val">${c.accuracy} m</span></div>` +
           `<div class="debug-row"><span class="debug-key">took:</span><span class="debug-val">${Date.now() - started} ms</span></div>`);
+        console.log('LSQ-CTX-GEO ' + JSON.stringify({
+          state: 'ok', lat: c.latitude, lng: c.longitude,
+          accuracy: c.accuracy, tookMs: Date.now() - started, trigger: trigger
+        }));
       },
       (err) => {
         if (settled) return;
         settled = true; clearTimeout(watchdog);
         const names = { 1: 'PERMISSION_DENIED', 2: 'POSITION_UNAVAILABLE', 3: 'TIMEOUT' };
-        geoLine(names[err.code] || ('ERROR ' + err.code), 'badge-token',
+        const label = names[err.code] || ('ERROR ' + err.code);
+        geoLine(label, 'badge-token',
           escapeHtml(err.message || '') + '<br>Resolved in ' + (Date.now() - started) + ' ms.');
+        console.log('LSQ-CTX-GEO ' + JSON.stringify({
+          state: label, code: err.code, message: err.message || '',
+          tookMs: Date.now() - started, trigger: trigger
+        }));
       },
       { enableHighAccuracy: true, timeout: GEO_WATCHDOG_MS - 2000, maximumAge: 0 }
     );
-  });
+  }
+
+  // Auto-request on load. This is what a real external form would do, and it
+  // puts the Android permission prompt in the middle of page load — the exact
+  // sequence that drops the GeolocationPermissions.Callback (CF-6).
+  requestGeo('on page load');
+
+  // Button becomes a retry, for re-running after granting permission in
+  // Android settings without reloading the form.
+  document.getElementById('geoBtn').addEventListener('click', () => requestGeo('manual retry'));
 
   // Native app can call this after page load to display headers it set,
   // e.g. (Android): webView.evaluateJavascript("window.showHeaders(" + json + ")", null);
