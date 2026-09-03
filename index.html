@@ -425,6 +425,12 @@
     </div>
 
     <div class="debug-section">
+      <div class="debug-label">Geolocation (navigator.geolocation)</div>
+      <div id="debugGeo"><span class="debug-empty">not requested</span></div>
+      <button type="button" class="debug-copy" id="geoBtn">Fetch location</button>
+    </div>
+
+    <div class="debug-section">
       <div class="debug-label">Headers (via native bridge only)</div>
       <div id="debugHeaders"><span class="debug-empty">none received</span></div>
     </div>
@@ -563,8 +569,18 @@
       </td>
     </tr>`).join('');
 
-  // Extra params beyond the five expected ones
-  renderKeyVals(debugParams, paramEntries.filter(([k]) => !expectedNames.includes(k)));
+  // Extra params beyond the five expected ones — badge these too, so tokens are
+  // still flagged when the Process Designer URL uses different param names.
+  const otherEntries = paramEntries.filter(([k]) => !expectedNames.includes(k));
+  if (!otherEntries.length) {
+    debugParams.innerHTML = '<span class="debug-empty">none</span>';
+  } else {
+    debugParams.innerHTML = otherEntries.map(([k, v]) => {
+      const st = classify(v);
+      return `<div class="debug-row"><span class="debug-key">${escapeHtml(k)}:</span>` +
+             `<span class="debug-val"><span class="badge ${st.cls}">${st.label}</span> ${escapeHtml(v)}</span></div>`;
+    }).join('');
+  }
 
   // Full resolved URL — the definitive record of what native handed the page
   const debugUrlEl = document.getElementById('debugUrl');
@@ -619,6 +635,79 @@
     `<div class="debug-row"><span class="debug-key">LSQExternalFormClient:</span><span class="debug-val">${hasClient ? 'present' : 'ABSENT — not running in the LSQ WebView'}</span></div>` +
     `<div class="debug-row"><span class="debug-key">AuthenticationClient:</span><span class="debug-val">${hasAuth ? 'present — host treated as FIRST PARTY' : 'absent — host treated as third party'}</span></div>` +
     `<div class="debug-row"><span class="debug-key">origin:</span><span class="debug-val">${escapeHtml(window.location.origin)}</span></div>`;
+
+  // ------------------------------------------------------------------
+  // Geolocation probe
+  //
+  // The app does NOT push location to the page — ExternalFormLauncher only
+  // ever sends leadId/opportunityId/activityId/taskId, and MailMergeEntity has
+  // no location entity. So navigator.geolocation is the only available channel.
+  //
+  // It is wired up, but with a gap. LSWebChromeClient.onGeolocationPermissions-
+  // ShowPrompt() is implemented: if the app already holds location permission it
+  // calls callback.invoke(origin, true, false) immediately and this works. If it
+  // does NOT, it stashes the callback and calls fragment.requestPermissions(...),
+  // expecting the host fragment to later call onLocationPermissionResult().
+  // ExternalFormWebViewFragment never overrides onRequestPermissionsResult, so
+  // that never happens — the GeolocationPermissions.Callback is dropped and the
+  // JS request resolves neither success nor error.
+  //
+  // Hence the watchdog below: a request that produces no callback at all is the
+  // signature of that bug, and is reported distinctly from a clean denial.
+  // ------------------------------------------------------------------
+  const GEO_WATCHDOG_MS = 20000;
+  const geoEl = document.getElementById('debugGeo');
+
+  function geoLine(label, cls, detail) {
+    geoEl.innerHTML =
+      `<div class="debug-row"><span class="debug-val"><span class="badge ${cls}">${label}</span></span></div>` +
+      (detail ? `<div style="margin-top:5px">${detail}</div>` : '');
+  }
+
+  document.getElementById('geoBtn').addEventListener('click', () => {
+    if (!('geolocation' in navigator)) {
+      geoLine('UNSUPPORTED', 'badge-token', 'navigator.geolocation is not exposed in this WebView.');
+      return;
+    }
+
+    geoLine('REQUESTING…', 'badge-empty',
+      'If no result appears within ' + (GEO_WATCHDOG_MS / 1000) + 's, no callback fired at all.');
+
+    let settled = false;
+    const started = Date.now();
+
+    const watchdog = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      geoLine('NO CALLBACK', 'badge-token',
+        'Neither success nor error fired within ' + (GEO_WATCHDOG_MS / 1000) + 's.<br>' +
+        'This is the signature of the dropped <code>GeolocationPermissions.Callback</code> — ' +
+        '<code>ExternalFormWebViewFragment</code> does not implement ' +
+        '<code>onRequestPermissionsResult</code>, so the permission grant never reaches the WebView. ' +
+        'Grant location to the app in Android settings and retry: it should then resolve immediately.');
+    }, GEO_WATCHDOG_MS);
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        if (settled) return;
+        settled = true; clearTimeout(watchdog);
+        const c = pos.coords;
+        geoLine('OK', 'badge-ok',
+          `<div class="debug-row"><span class="debug-key">lat:</span><span class="debug-val">${c.latitude}</span></div>` +
+          `<div class="debug-row"><span class="debug-key">lng:</span><span class="debug-val">${c.longitude}</span></div>` +
+          `<div class="debug-row"><span class="debug-key">accuracy:</span><span class="debug-val">${c.accuracy} m</span></div>` +
+          `<div class="debug-row"><span class="debug-key">took:</span><span class="debug-val">${Date.now() - started} ms</span></div>`);
+      },
+      (err) => {
+        if (settled) return;
+        settled = true; clearTimeout(watchdog);
+        const names = { 1: 'PERMISSION_DENIED', 2: 'POSITION_UNAVAILABLE', 3: 'TIMEOUT' };
+        geoLine(names[err.code] || ('ERROR ' + err.code), 'badge-token',
+          escapeHtml(err.message || '') + '<br>Resolved in ' + (Date.now() - started) + ' ms.');
+      },
+      { enableHighAccuracy: true, timeout: GEO_WATCHDOG_MS - 2000, maximumAge: 0 }
+    );
+  });
 
   // Native app can call this after page load to display headers it set,
   // e.g. (Android): webView.evaluateJavascript("window.showHeaders(" + json + ")", null);
